@@ -1,0 +1,1196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CastBridge</title>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Barlow+Condensed:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink:    #0d0c0b;
+  --ink2:   #181613;
+  --ink3:   #221f1a;
+  --wire:   #2e2a23;
+  --amber:  #f5a623;
+  --amber2: #e8831a;
+  --ember:  #ff4d2e;
+  --signal: #39e88b;
+  --fog:    #7a7060;
+  --paper:  #cec5b0;
+  --glow-a: rgba(245,166,35,0.18);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Space Mono', monospace;
+  background: var(--ink);
+  color: var(--paper);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── NOISE TEXTURE OVERLAY ── */
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  background-size: 160px;
+  pointer-events: none; z-index: 999; opacity: 0.6;
+}
+
+/* ── SCAN LINES ── */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.06) 2px,
+    rgba(0,0,0,0.06) 4px
+  );
+  pointer-events: none; z-index: 998;
+}
+
+.wrap {
+  position: relative; z-index: 1;
+  max-width: 560px; margin: 0 auto;
+  padding: 28px 20px 80px;
+}
+
+/* ── HEADER ── */
+header {
+  display: flex; align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 32px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--wire);
+}
+
+.logo-block { display: flex; flex-direction: column; gap: 2px; }
+
+.logo-name {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 38px; font-weight: 900;
+  letter-spacing: -1px; line-height: 1;
+  color: var(--amber);
+  text-shadow: 0 0 40px rgba(245,166,35,0.4);
+}
+
+.logo-name span { color: var(--paper); }
+
+.logo-sub {
+  font-size: 9px; letter-spacing: 4px;
+  color: var(--fog); text-transform: uppercase;
+}
+
+.ble-pill {
+  font-size: 10px; letter-spacing: 2px;
+  color: var(--amber);
+  border: 1px solid var(--amber2);
+  padding: 5px 12px; border-radius: 2px;
+  background: rgba(245,166,35,0.06);
+  text-transform: uppercase;
+  position: relative; overflow: hidden;
+}
+
+.ble-pill::before {
+  content: '';
+  position: absolute; top: 0; left: -100%;
+  width: 60%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(245,166,35,0.15), transparent);
+  animation: sweep 3s ease-in-out infinite;
+}
+
+@keyframes sweep { 0%,100% { left:-100%; } 60% { left:160%; } }
+
+/* ── STATUS BAR ── */
+.status-bar {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--ink2);
+  border: 1px solid var(--wire);
+  border-left: 3px solid var(--fog);
+  padding: 10px 16px; margin-bottom: 20px;
+  font-size: 11px; letter-spacing: 0.5px;
+  transition: border-left-color 0.3s;
+}
+
+.status-bar.ready     { border-left-color: var(--signal); }
+.status-bar.scanning  { border-left-color: var(--amber); }
+.status-bar.connected { border-left-color: var(--signal); }
+.status-bar.error     { border-left-color: var(--ember); }
+
+.status-led {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--fog); flex-shrink: 0;
+  transition: all 0.3s;
+}
+
+.status-bar.ready     .status-led { background: var(--signal); box-shadow: 0 0 8px var(--signal); animation: blink 2.5s ease-in-out infinite; }
+.status-bar.scanning  .status-led { background: var(--amber);  box-shadow: 0 0 8px var(--amber);  animation: blink 0.8s ease-in-out infinite; }
+.status-bar.connected .status-led { background: var(--signal); box-shadow: 0 0 8px var(--signal); }
+.status-bar.error     .status-led { background: var(--ember);  box-shadow: 0 0 6px var(--ember); }
+
+@keyframes blink { 0%,100%{ opacity:1; } 50%{ opacity:0.25; } }
+
+.status-text { color: var(--fog); flex: 1; }
+.status-text strong { color: var(--paper); font-weight: 700; }
+
+/* ── PANELS (cards) ── */
+.panel {
+  background: var(--ink2);
+  border: 1px solid var(--wire);
+  border-radius: 4px;
+  padding: 24px; margin-bottom: 18px;
+  position: relative; overflow: hidden;
+}
+
+.panel::before {
+  content: '';
+  position: absolute; top: 0; left: 0;
+  width: 3px; height: 100%;
+  background: var(--wire);
+  transition: background 0.3s;
+}
+
+.panel.accent-amber::before { background: var(--amber); }
+.panel.accent-signal::before { background: var(--signal); }
+.panel.accent-ember::before  { background: var(--ember); }
+
+.panel-label {
+  font-size: 9px; font-weight: 700;
+  letter-spacing: 3px; text-transform: uppercase;
+  color: var(--fog); margin-bottom: 18px;
+  display: flex; align-items: center; gap: 10px;
+}
+
+.panel-label::after {
+  content: ''; flex: 1; height: 1px; background: var(--wire);
+}
+
+/* ── ROLE GRID ── */
+.role-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.role-tile {
+  background: var(--ink3);
+  border: 1px solid var(--wire);
+  border-radius: 3px; padding: 22px 16px;
+  cursor: pointer; transition: all 0.15s ease;
+  text-align: center; color: var(--paper);
+  font-family: 'Space Mono', monospace;
+  position: relative; overflow: hidden;
+  user-select: none;
+}
+
+.role-tile::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(135deg, rgba(245,166,35,0.04), transparent);
+  opacity: 0; transition: opacity 0.2s;
+}
+
+.role-tile:hover { border-color: var(--amber); transform: translateY(-2px); }
+.role-tile:hover::after { opacity: 1; }
+.role-tile:active { transform: translateY(0px) scale(0.98); }
+
+.role-tile.active {
+  border-color: var(--amber);
+  background: rgba(245,166,35,0.07);
+  box-shadow: inset 0 0 0 1px rgba(245,166,35,0.2), 0 0 20px rgba(245,166,35,0.1);
+}
+
+.role-tile.active::after { opacity: 1; }
+
+.tile-icon { font-size: 30px; margin-bottom: 10px; line-height: 1; }
+
+.tile-label {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 18px; font-weight: 800;
+  letter-spacing: 1px; text-transform: uppercase;
+  margin-bottom: 4px; color: var(--paper);
+}
+
+.role-tile.active .tile-label { color: var(--amber); }
+
+.tile-sub {
+  font-size: 9px; color: var(--fog);
+  letter-spacing: 1px; text-transform: uppercase;
+}
+
+/* ── BUTTONS ── */
+.btn {
+  width: 100%; padding: 15px 20px;
+  border: none; border-radius: 3px;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 16px; font-weight: 800;
+  letter-spacing: 2px; text-transform: uppercase;
+  cursor: pointer; transition: all 0.15s;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  position: relative; overflow: hidden;
+}
+
+.btn::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.06) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+.btn-amber {
+  background: var(--amber);
+  color: var(--ink);
+  box-shadow: 0 2px 0 var(--amber2), 0 4px 16px rgba(245,166,35,0.25);
+}
+
+.btn-amber:hover {
+  background: #f7b83a;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 0 var(--amber2), 0 8px 24px rgba(245,166,35,0.35);
+}
+
+.btn-amber:active { transform: translateY(1px); box-shadow: 0 1px 0 var(--amber2); }
+.btn-amber:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+
+.btn-ghost {
+  background: transparent; color: var(--ember);
+  border: 1px solid rgba(255,77,46,0.4);
+}
+.btn-ghost:hover { background: rgba(255,77,46,0.08); border-color: var(--ember); }
+
+.btn-outline {
+  background: transparent; color: var(--paper);
+  border: 1px solid var(--wire); font-size: 13px; font-weight: 700;
+  letter-spacing: 1px; padding: 12px 20px;
+}
+.btn-outline:hover { border-color: var(--fog); background: var(--ink3); }
+
+/* ── PIN DISPLAY (receiver) ── */
+.pin-reveal {
+  display: none; margin-bottom: 18px;
+}
+.pin-reveal.show { display: block; }
+
+.pin-reveal-inner {
+  background: var(--ink3);
+  border: 1px solid var(--wire);
+  border-top: 2px solid var(--amber);
+  border-radius: 3px; padding: 24px 20px;
+  text-align: center;
+}
+
+.pin-header {
+  font-size: 9px; letter-spacing: 3px; text-transform: uppercase;
+  color: var(--fog); margin-bottom: 20px;
+}
+
+.pin-chars {
+  display: flex; justify-content: center; gap: 8px;
+  margin-bottom: 18px;
+}
+
+.pin-ch {
+  width: 52px; height: 66px;
+  background: var(--ink);
+  border: 1px solid var(--wire);
+  border-bottom: 3px solid var(--amber);
+  border-radius: 2px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 32px; font-weight: 900; color: var(--amber);
+  letter-spacing: 0;
+  text-shadow: 0 0 20px rgba(245,166,35,0.5);
+  animation: pinReveal 0.4s cubic-bezier(0.34,1.56,0.64,1) both;
+}
+
+.pin-ch:nth-child(1) { animation-delay: 0s; }
+.pin-ch:nth-child(2) { animation-delay: 0.06s; }
+.pin-ch:nth-child(3) { animation-delay: 0.12s; }
+.pin-ch:nth-child(4) { animation-delay: 0.18s; }
+.pin-ch:nth-child(5) { animation-delay: 0.24s; }
+
+@keyframes pinReveal {
+  from { opacity:0; transform: translateY(10px) scale(0.85); }
+  to   { opacity:1; transform: translateY(0) scale(1); }
+}
+
+.pin-copy-btn {
+  background: transparent;
+  border: 1px solid var(--wire); color: var(--fog);
+  padding: 7px 18px; border-radius: 2px; cursor: pointer;
+  font-family: 'Space Mono', monospace; font-size: 10px;
+  letter-spacing: 1px; transition: all 0.15s;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.pin-copy-btn:hover { border-color: var(--amber); color: var(--amber); }
+
+.pin-note {
+  font-size: 9px; color: var(--fog);
+  letter-spacing: 1px; margin-top: 12px;
+  text-transform: uppercase;
+}
+
+/* ── SCAN RING ── */
+.scan-anim {
+  display: none; padding: 20px 0; text-align: center;
+}
+.scan-anim.show { display: block; }
+
+.scan-tower {
+  display: inline-flex; flex-direction: column;
+  align-items: center; gap: 0; position: relative;
+}
+
+.scan-arc {
+  width: 60px; height: 30px;
+  border: 2px solid var(--amber);
+  border-bottom: none; border-radius: 60px 60px 0 0;
+  opacity: 0; animation: arcPulse 1.6s ease-out infinite;
+}
+
+.scan-arc:nth-child(1) { width: 100px; height: 50px; animation-delay: 0s; }
+.scan-arc:nth-child(2) { width: 70px;  height: 35px; animation-delay: 0.25s; margin-top: -25px; }
+.scan-arc:nth-child(3) { width: 40px;  height: 20px; animation-delay: 0.5s;  margin-top: -18px; }
+
+.scan-base {
+  width: 8px; height: 20px; background: var(--amber);
+  border-radius: 0 0 3px 3px; margin-top: -2px;
+  box-shadow: 0 0 10px var(--amber);
+}
+
+@keyframes arcPulse {
+  0%   { opacity:0.9; }
+  100% { opacity:0; }
+}
+
+.scan-label {
+  font-size: 9px; letter-spacing: 3px; color: var(--fog);
+  text-transform: uppercase; margin-top: 12px;
+}
+
+/* ── DEVICE LIST ── */
+.device-list { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+
+.device-row {
+  background: var(--ink3);
+  border: 1px solid var(--wire);
+  border-radius: 3px; padding: 14px 16px;
+  display: flex; align-items: center; gap: 14px;
+  animation: rowIn 0.25s ease forwards;
+}
+
+@keyframes rowIn { from { opacity:0; transform:translateX(-8px); } to { opacity:1; transform:translateX(0); } }
+
+.device-glyph {
+  width: 38px; height: 38px; border-radius: 3px;
+  background: var(--ink);
+  border: 1px solid var(--wire);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; flex-shrink: 0;
+}
+
+.device-info { flex: 1; }
+.device-name { font-size: 13px; font-weight: 700; margin-bottom: 2px; color: var(--paper); }
+.device-id   { font-size: 9px; color: var(--fog); letter-spacing: 1px; }
+
+.ble-tag {
+  font-size: 8px; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--amber); border: 1px solid rgba(245,166,35,0.3);
+  padding: 2px 6px; border-radius: 2px; margin-left: 6px;
+}
+
+.device-pin-btn {
+  background: transparent; border: 1px solid var(--wire);
+  color: var(--paper); padding: 7px 14px; border-radius: 2px;
+  font-family: 'Barlow Condensed', sans-serif; font-size: 13px;
+  font-weight: 700; letter-spacing: 1px;
+  cursor: pointer; transition: all 0.15s;
+}
+.device-pin-btn:hover { border-color: var(--amber); color: var(--amber); }
+
+.empty-state {
+  text-align: center; padding: 32px;
+  color: var(--fog); font-size: 10px;
+  letter-spacing: 2px; text-transform: uppercase;
+  display: none;
+}
+.empty-state.show { display: block; }
+.empty-glyph { font-size: 32px; margin-bottom: 12px; }
+
+/* ── PIN INPUT (sender) ── */
+.pin-input-row {
+  display: flex; justify-content: center; gap: 8px; margin-bottom: 14px;
+}
+
+.pib {
+  width: 52px; height: 66px;
+  background: var(--ink);
+  border: 1px solid var(--wire);
+  border-bottom: 2px solid var(--wire);
+  border-radius: 2px; text-align: center;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 30px; font-weight: 900;
+  color: var(--paper);
+  outline: none; transition: all 0.15s;
+  text-transform: uppercase; caret-color: var(--amber);
+}
+
+.pib:focus {
+  border-color: var(--amber);
+  border-bottom-color: var(--amber);
+  box-shadow: 0 0 0 2px rgba(245,166,35,0.12);
+  background: rgba(245,166,35,0.03);
+}
+
+.pib.hit {
+  border-bottom-color: var(--amber);
+  color: var(--amber);
+}
+
+/* ── SEPARATOR ── */
+.sep {
+  display: flex; align-items: center; gap: 14px;
+  margin: 18px 0; color: var(--fog);
+  font-size: 9px; letter-spacing: 3px; text-transform: uppercase;
+}
+.sep::before, .sep::after { content:''; flex:1; height:1px; background:var(--wire); }
+
+/* ── MANUAL ID INPUT ── */
+.row-input { display: flex; gap: 8px; margin-top: 14px; }
+
+.txt-input {
+  flex: 1; background: var(--ink);
+  border: 1px solid var(--wire); border-radius: 2px;
+  padding: 11px 14px;
+  font-family: 'Space Mono', monospace; font-size: 11px;
+  color: var(--paper); outline: none; transition: border-color 0.15s;
+}
+.txt-input:focus { border-color: var(--amber); }
+.txt-input::placeholder { color: var(--fog); }
+
+.btn-sm {
+  padding: 11px 16px; border-radius: 2px;
+  background: var(--amber); color: var(--ink);
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 14px; font-weight: 800; letter-spacing: 1px;
+  border: none; cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.btn-sm:hover { background: #f7b83a; transform: translateY(-1px); }
+
+/* ── CONNECTED STRIP ── */
+.conn-strip {
+  background: rgba(57,232,139,0.05);
+  border: 1px solid rgba(57,232,139,0.2);
+  border-radius: 3px; padding: 12px 16px;
+  margin-top: 14px; display: none;
+}
+.conn-strip.show { display: flex; align-items: center; justify-content: space-between; }
+.conn-label { font-size: 9px; letter-spacing: 2px; color: var(--fog); text-transform: uppercase; }
+.conn-val   { font-size: 13px; font-weight: 700; color: var(--signal); }
+
+/* ── LIVE BADGE ── */
+.live-badge {
+  display: none; align-items: center; gap: 8px;
+  border: 1px solid rgba(255,77,46,0.35);
+  background: rgba(255,77,46,0.06);
+  border-radius: 3px; padding: 8px 14px;
+  margin-top: 14px; font-size: 9px;
+  letter-spacing: 2px; text-transform: uppercase; color: #ff8570;
+}
+.live-badge.show { display: flex; }
+.live-dot { width:7px; height:7px; border-radius:50%; background:var(--ember); animation:blink 0.8s infinite; }
+
+/* ── CAST CONTROLS ── */
+#castControls { display: none; margin-top: 16px; }
+
+/* ── SCREEN VIEW (receiver) ── */
+.screen-view {
+  background: #000;
+  border: 1px solid var(--wire);
+  border-radius: 3px; overflow: hidden;
+  aspect-ratio: 16/9; display: none;
+  position: relative; margin-top: 18px;
+}
+.screen-view.show { display: block; }
+.screen-view video { width:100%; height:100%; object-fit:contain; }
+
+.screen-hud {
+  position: absolute; top: 10px; right: 12px;
+  font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+  color: rgba(255,255,255,0.25);
+  display: flex; align-items: center; gap: 5px;
+}
+.hud-dot { width:5px; height:5px; border-radius:50%; background:var(--ember); animation:blink 1s infinite; }
+
+/* ── MODAL ── */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(13,12,11,0.85);
+  backdrop-filter: blur(6px);
+  z-index: 100; display: none;
+  align-items: center; justify-content: center; padding: 20px;
+}
+.modal-overlay.show { display: flex; }
+
+.modal {
+  background: var(--ink2);
+  border: 1px solid var(--wire);
+  border-top: 2px solid var(--amber);
+  border-radius: 4px; padding: 36px 32px;
+  max-width: 380px; width: 100%;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.7);
+  animation: modalDrop 0.3s cubic-bezier(0.34,1.56,0.64,1);
+}
+
+@keyframes modalDrop {
+  from { opacity:0; transform:translateY(-20px) scale(0.95); }
+  to   { opacity:1; transform:translateY(0) scale(1); }
+}
+
+.modal-icon { font-size: 44px; text-align: center; margin-bottom: 16px; }
+
+.modal-title {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 24px; font-weight: 900;
+  letter-spacing: 1px; text-transform: uppercase;
+  text-align: center; color: var(--paper);
+  margin-bottom: 10px;
+}
+
+.modal-body {
+  font-size: 11px; color: var(--fog); text-align: center;
+  line-height: 1.7; margin-bottom: 28px;
+}
+.modal-body strong { color: var(--amber); }
+
+.modal-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.mbtn {
+  padding: 14px; border-radius: 3px;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 15px; font-weight: 800; letter-spacing: 1px;
+  cursor: pointer; border: none; transition: all 0.15s; text-transform: uppercase;
+}
+
+.mbtn-accept {
+  background: var(--signal); color: var(--ink);
+  box-shadow: 0 2px 0 #22b865;
+}
+.mbtn-accept:hover { background: #45eda0; transform: translateY(-2px); }
+.mbtn-accept:active { transform: translateY(0); box-shadow: none; }
+
+.mbtn-decline {
+  background: transparent; color: var(--ember);
+  border: 1px solid rgba(255,77,46,0.35);
+}
+.mbtn-decline:hover { background: rgba(255,77,46,0.1); }
+
+/* ── TOAST ── */
+.toast {
+  position: fixed; bottom: 28px; left: 50%;
+  transform: translateX(-50%) translateY(80px);
+  background: var(--ink2); border: 1px solid var(--wire);
+  border-radius: 3px; padding: 11px 20px;
+  font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+  z-index: 300; transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
+  white-space: nowrap; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.toast.show { transform: translateX(-50%) translateY(0); }
+.toast.ok   { border-color: rgba(57,232,139,0.5); color: var(--signal); }
+.toast.err  { border-color: rgba(255,77,46,0.5);  color: var(--ember); }
+.toast.info { border-color: rgba(245,166,35,0.4); color: var(--amber); }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <!-- HEADER -->
+  <header>
+    <div class="logo-block">
+      <div class="logo-name">Cast<span>Bridge</span></div>
+      <div class="logo-sub">Wireless screen casting over WebRTC</div>
+    </div>
+    <div class="ble-pill">BLE 4.0–5.x</div>
+  </header>
+
+  <!-- STATUS -->
+  <div class="status-bar" id="statusBar">
+    <div class="status-led"></div>
+    <div class="status-text" id="statusText">Select a role to begin</div>
+  </div>
+
+  <!-- ROLE SELECT -->
+  <div class="panel accent-amber">
+    <div class="panel-label">Device Role</div>
+    <div class="role-grid">
+      <div class="role-tile" id="roleSender" onclick="selectRole('sender')">
+        <div class="tile-icon">📲</div>
+        <div class="tile-label">Sender</div>
+        <div class="tile-sub">Cast your screen</div>
+      </div>
+      <div class="role-tile" id="roleReceiver" onclick="selectRole('receiver')">
+        <div class="tile-icon">🖥️</div>
+        <div class="tile-label">Receiver</div>
+        <div class="tile-sub">Display a cast</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PIN DISPLAY (receiver only) -->
+  <div class="pin-reveal" id="pinReveal">
+    <div class="pin-reveal-inner">
+      <div class="pin-header">Your Session PIN — share with sender</div>
+      <div class="pin-chars" id="pinChars"></div>
+      <button class="pin-copy-btn" onclick="copyPin()">⌗ Copy PIN</button>
+      <div class="pin-note">Valid for this session only</div>
+    </div>
+  </div>
+
+  <!-- SENDER PANEL -->
+  <div id="senderPanel" style="display:none">
+
+    <!-- BLUETOOTH SCAN -->
+    <div class="panel accent-amber">
+      <div class="panel-label">Bluetooth Discovery</div>
+      <button class="btn btn-amber" id="scanBtn" onclick="startBluetoothScan()">
+        ◉ &nbsp;Scan via Bluetooth
+      </button>
+      <div class="scan-anim" id="scanAnim">
+        <div class="scan-tower">
+          <div class="scan-arc"></div>
+          <div class="scan-arc"></div>
+          <div class="scan-arc"></div>
+          <div class="scan-base"></div>
+        </div>
+        <div class="scan-label">Scanning nearby devices</div>
+      </div>
+      <div class="device-list" id="deviceList"></div>
+      <div class="empty-state" id="emptyState">
+        <div class="empty-glyph">📡</div>
+        No devices detected — ensure Bluetooth is on
+      </div>
+    </div>
+
+    <!-- PIN ENTRY -->
+    <div class="panel">
+      <div class="panel-label">Connect via PIN</div>
+      <div class="pin-input-row">
+        <input class="pib" id="pi0" maxlength="1" autocomplete="off" spellcheck="false"
+               oninput="pinInput(0)" onkeydown="pinKeydown(event,0)" onpaste="pinPaste(event)" />
+        <input class="pib" id="pi1" maxlength="1" autocomplete="off" spellcheck="false"
+               oninput="pinInput(1)" onkeydown="pinKeydown(event,1)" />
+        <input class="pib" id="pi2" maxlength="1" autocomplete="off" spellcheck="false"
+               oninput="pinInput(2)" onkeydown="pinKeydown(event,2)" />
+        <input class="pib" id="pi3" maxlength="1" autocomplete="off" spellcheck="false"
+               oninput="pinInput(3)" onkeydown="pinKeydown(event,3)" />
+        <input class="pib" id="pi4" maxlength="1" autocomplete="off" spellcheck="false"
+               oninput="pinInput(4)" onkeydown="pinKeydown(event,4)" />
+      </div>
+      <button class="btn btn-amber" onclick="connectByPin()">⌁ &nbsp;Connect with PIN</button>
+
+      <div class="sep">or full peer ID</div>
+      <div class="row-input">
+        <input class="txt-input" id="manualIdInput" placeholder="Paste full peer ID…" />
+        <button class="btn-sm" onclick="connectManual()">Connect</button>
+      </div>
+    </div>
+
+    <!-- POST-CONNECT CONTROLS -->
+    <div class="conn-strip" id="connStrip">
+      <span class="conn-label">Connected to</span>
+      <span class="conn-val" id="connVal">—</span>
+    </div>
+
+    <div class="live-badge" id="liveBadge">
+      <div class="live-dot"></div>
+      Live — screen is being cast
+    </div>
+
+    <div id="castControls">
+      <button class="btn btn-amber" id="startCastBtn" onclick="startCasting()">
+        ▶ &nbsp;Start Casting Screen
+      </button>
+      <button class="btn btn-ghost" id="stopCastBtn" onclick="stopCasting()" style="display:none; margin-top:10px;">
+        ■ &nbsp;Stop Casting
+      </button>
+    </div>
+
+  </div><!-- /senderPanel -->
+
+  <!-- RECEIVER PANEL -->
+  <div id="receiverPanel" style="display:none">
+    <div class="panel">
+      <div class="panel-label">Incoming Cast</div>
+      <p style="font-size:10px; color:var(--fog); letter-spacing:0.5px; line-height:1.8;">
+        Waiting for a sender to connect using your PIN above.<br>
+        You'll receive a cast request when they connect.
+      </p>
+
+      <div class="screen-view" id="screenView">
+        <video id="remoteVideo" autoplay playsinline></video>
+        <div class="screen-hud">
+          <div class="hud-dot"></div>
+          Live
+        </div>
+      </div>
+
+      <button class="btn btn-ghost" id="stopReceiveBtn" onclick="stopReceiving()" style="display:none; margin-top:14px;">
+        ■ &nbsp;End Session
+      </button>
+    </div>
+  </div>
+
+</div><!-- /.wrap -->
+
+<!-- CAST REQUEST MODAL -->
+<div class="modal-overlay" id="castModal">
+  <div class="modal">
+    <div class="modal-icon">📡</div>
+    <div class="modal-title">Cast Request</div>
+    <div class="modal-body">
+      <strong id="senderDeviceName">A device</strong> wants to cast their screen to this display.<br>
+      Accept or decline below.
+    </div>
+    <div class="modal-btns">
+      <button class="mbtn mbtn-decline" onclick="rejectCast()">✕ &nbsp;Decline</button>
+      <button class="mbtn mbtn-accept"  onclick="acceptCast()">✓ &nbsp;Accept</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+// ── STATE ─────────────────────────────────────────────────────────────────────
+var role             = null;
+var peer             = null;
+var conn             = null;
+var mediaConn        = null;
+var localStream      = null;
+var btDevice         = null;
+var pendingCall      = null;   // incoming call waiting on receiver to accept
+var myPin            = null;
+var castAccepted     = false;
+var toastTimer       = null;
+
+// ── UI ────────────────────────────────────────────────────────────────────────
+function setStatus(msg, type) {
+  document.getElementById('statusBar').className = 'status-bar ' + (type || '');
+  document.getElementById('statusText').innerHTML = msg;
+}
+
+function showToast(msg, type, dur) {
+  clearTimeout(toastTimer);
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type || 'info');
+  toastTimer = setTimeout(function(){ t.classList.remove('show'); }, dur || 3500);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+
+function deviceIcon(name) {
+  var n = (name||'').toLowerCase();
+  if (/iphone|android|pixel|samsung|galaxy|phone/.test(n)) return '📱';
+  if (/macbook|laptop|notebook|thinkpad|dell|lenovo/.test(n)) return '💻';
+  if (/ipad|tablet/.test(n)) return '📟';
+  return '📡';
+}
+
+// ── PIN ───────────────────────────────────────────────────────────────────────
+function generatePin() {
+  var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  var p = '';
+  for (var i = 0; i < 5; i++) p += chars[Math.floor(Math.random() * chars.length)];
+  return p;
+}
+
+function renderPin(pin) {
+  var el = document.getElementById('pinChars');
+  el.innerHTML = '';
+  for (var i = 0; i < pin.length; i++) {
+    var d = document.createElement('div');
+    d.className = 'pin-ch';
+    d.textContent = pin[i];
+    el.appendChild(d);
+  }
+}
+
+function copyPin() {
+  if (!myPin) return;
+  navigator.clipboard.writeText(myPin)
+    .then(function(){ showToast('PIN copied: ' + myPin, 'ok'); })
+    .catch(function(){ showToast('Your PIN: ' + myPin, 'info', 6000); });
+}
+
+function pinInput(idx) {
+  var box = document.getElementById('pi' + idx);
+  var val = box.value.replace(/[^A-Za-z0-9]/g,'').toUpperCase();
+  box.value = val ? val[val.length-1] : '';
+  box.classList.toggle('hit', box.value.length > 0);
+  if (box.value && idx < 4) document.getElementById('pi'+(idx+1)).focus();
+}
+
+function pinKeydown(e, idx) {
+  if (e.key === 'Backspace') {
+    var box = document.getElementById('pi' + idx);
+    if (!box.value && idx > 0) {
+      e.preventDefault();
+      var prev = document.getElementById('pi'+(idx-1));
+      prev.value = ''; prev.classList.remove('hit'); prev.focus();
+    }
+  }
+  if (e.key === 'Enter') connectByPin();
+}
+
+function pinPaste(e) {
+  e.preventDefault();
+  var raw = (e.clipboardData || window.clipboardData).getData('text')
+              .replace(/[^A-Za-z0-9]/g,'').toUpperCase();
+  for (var i = 0; i < 5; i++) {
+    var b = document.getElementById('pi'+i);
+    b.value = raw[i] || '';
+    b.classList.toggle('hit', b.value.length > 0);
+  }
+  document.getElementById('pi'+Math.min(raw.length,4)).focus();
+}
+
+function getPinFromInputs() {
+  return [0,1,2,3,4].map(function(i){
+    return document.getElementById('pi'+i).value.toUpperCase();
+  }).join('');
+}
+
+function allPinFilled() {
+  for (var i = 0; i < 5; i++) {
+    if (!document.getElementById('pi'+i).value.trim()) return false;
+  }
+  return true;
+}
+
+// ── ROLE ──────────────────────────────────────────────────────────────────────
+function selectRole(r) {
+  role = r;
+  document.getElementById('roleSender').classList.toggle('active',   r==='sender');
+  document.getElementById('roleReceiver').classList.toggle('active', r==='receiver');
+  document.getElementById('senderPanel').style.display   = r==='sender'   ? 'block':'none';
+  document.getElementById('receiverPanel').style.display = r==='receiver' ? 'block':'none';
+  initPeer();
+}
+
+// ── PEER ──────────────────────────────────────────────────────────────────────
+function initPeer() {
+  if (peer) { try { peer.destroy(); } catch(e){} peer = null; }
+  castAccepted = false; pendingCall = null; conn = null; mediaConn = null;
+  if (localStream) { localStream.getTracks().forEach(function(t){t.stop();}); localStream = null; }
+
+  setStatus('Connecting to network…', 'scanning');
+
+  var peerId = undefined;
+  if (role === 'receiver') { myPin = generatePin(); peerId = 'cb-' + myPin; }
+
+  peer = new Peer(peerId, {
+    host: '0.peerjs.com', port: 443, secure: true,
+    config: { iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:global.stun.twilio.com:3478' }
+    ]}
+  });
+
+  peer.on('open', function() {
+    if (role === 'receiver') {
+      document.getElementById('pinReveal').classList.add('show');
+      renderPin(myPin);
+      setStatus('<strong>Receiver ready</strong> — share your PIN with the sender', 'ready');
+      showToast('PIN ready: ' + myPin, 'ok');
+    } else {
+      setStatus('<strong>Sender ready</strong> — enter the receiver\'s PIN', 'ready');
+    }
+  });
+
+  peer.on('error', function(err) {
+    if (err.type === 'peer-unavailable') {
+      showToast('No receiver found with that PIN.', 'err');
+      setStatus('PIN not found — check and try again', 'error');
+    } else if (err.type === 'unavailable-id' && role === 'receiver') {
+      setTimeout(initPeer, 400); // PIN collision — regenerate
+    } else {
+      showToast('Network error: ' + (err.message || err.type), 'err');
+      setStatus('Network error — try refreshing', 'error');
+    }
+  });
+
+  // ── RECEIVER: someone connected via data channel ──
+  peer.on('connection', function(c) {
+    conn = c;
+    c.on('open', function() {
+      setStatus('<strong>Sender connected</strong> — waiting for cast request…', 'connected');
+      showToast('Sender connected!', 'ok');
+    });
+    c.on('data', function(data) {
+      if (data.type === 'cast-request') {
+        document.getElementById('senderDeviceName').textContent = data.senderName || 'A device';
+        document.getElementById('castModal').classList.add('show');
+      }
+      if (data.type === 'cast-stopped') {
+        endCastReceiver();
+        showToast('Sender stopped the cast.', 'info');
+      }
+    });
+    c.on('error', function(err) { showToast('Channel error: ' + (err.message||''), 'err'); });
+  });
+
+  // ── RECEIVER: incoming media call ──
+  // The call arrives here. We store it and answer only after user taps Accept.
+  peer.on('call', function(call) {
+    pendingCall = call;
+    if (castAccepted) answerCall(call); // user already tapped Accept
+  });
+}
+
+// ── BLUETOOTH ─────────────────────────────────────────────────────────────────
+function startBluetoothScan() {
+  if (!navigator.bluetooth) { showToast('Web Bluetooth not supported.', 'err'); return; }
+  var list = document.getElementById('deviceList');
+  var anim = document.getElementById('scanAnim');
+  var empty= document.getElementById('emptyState');
+  var btn  = document.getElementById('scanBtn');
+  list.innerHTML = ''; empty.classList.remove('show');
+  anim.classList.add('show'); btn.disabled = true;
+  setStatus('Scanning for nearby Bluetooth devices…', 'scanning');
+
+  navigator.bluetooth.requestDevice({
+    acceptAllDevices: true,
+    optionalServices: ['battery_service','device_information','generic_access']
+  }).then(function(device) {
+    btDevice = device; anim.classList.remove('show'); btn.disabled = false;
+    var row = document.createElement('div');
+    row.className = 'device-row';
+    row.innerHTML =
+      '<div class="device-glyph">' + deviceIcon(device.name||'') + '</div>' +
+      '<div class="device-info">' +
+        '<div class="device-name">' + escapeHtml(device.name||'Unknown') +
+          '<span class="ble-tag">BLE</span></div>' +
+        '<div class="device-id">' + device.id.slice(0,20) + '…</div>' +
+      '</div>' +
+      '<button class="device-pin-btn" onclick="focusPinInput()">Enter PIN</button>';
+    list.appendChild(row);
+    setStatus('<strong>' + escapeHtml(device.name||'Device') + '</strong> found — enter its PIN', 'ready');
+    showToast('Device found! Enter its PIN below.', 'ok');
+  }).catch(function(err) {
+    anim.classList.remove('show'); btn.disabled = false;
+    if (err.name === 'NotFoundError') { empty.classList.add('show'); setStatus('No device selected.',''); }
+    else { showToast('Bluetooth error: ' + err.message, 'err'); }
+  });
+}
+
+function focusPinInput() {
+  var f = document.getElementById('pi0');
+  f.focus(); f.scrollIntoView({ behavior:'smooth', block:'center' });
+}
+
+// ── CONNECT ───────────────────────────────────────────────────────────────────
+function connectByPin() {
+  if (!allPinFilled()) {
+    showToast('Enter all 5 PIN characters.', 'err');
+    for (var i=0;i<5;i++) { if (!document.getElementById('pi'+i).value) { document.getElementById('pi'+i).focus(); break; } }
+    return;
+  }
+  if (!peer || !peer.open) { showToast('Not ready yet.', 'err'); return; }
+  var pin = getPinFromInputs();
+  connectToReceiver('cb-' + pin, 'PIN ' + pin);
+}
+
+function connectManual() {
+  var id = document.getElementById('manualIdInput').value.trim();
+  if (!id) { showToast('Enter a peer ID.', 'err'); return; }
+  connectToReceiver(id, 'Remote Device');
+}
+
+function connectToReceiver(receiverId, label) {
+  if (!peer || !peer.open) { showToast('Not ready yet.', 'err'); return; }
+  setStatus('Connecting to receiver…', 'scanning');
+  conn = peer.connect(receiverId, { reliable: true });
+
+  conn.on('open', function() {
+    document.getElementById('connStrip').classList.add('show');
+    document.getElementById('connVal').textContent = label;
+    document.getElementById('castControls').style.display = 'block';
+    setStatus('<strong>Connected</strong> to ' + escapeHtml(label) + ' — ready to cast', 'connected');
+    showToast('Connected! Click Start Casting.', 'ok');
+  });
+
+  conn.on('error', function(err) {
+    showToast('Connect failed: ' + (err.message||''), 'err');
+    setStatus('Connection failed.', 'error');
+  });
+
+  // ── SENDER: listen for receiver's response ──
+  conn.on('data', function(data) {
+    if (data.type === 'cast-accepted') {
+      // Receiver accepted — call them with the stream we ALREADY captured
+      if (!localStream) {
+        showToast('Stream lost — try casting again.', 'err');
+        setStatus('<strong>Connected</strong> — ready to cast', 'connected');
+        document.getElementById('startCastBtn').style.display = 'flex';
+        document.getElementById('stopCastBtn').style.display  = 'none';
+        return;
+      }
+      mediaConn = peer.call(conn.peer, localStream);
+      document.getElementById('liveBadge').classList.add('show');
+      document.getElementById('startCastBtn').style.display = 'none';
+      document.getElementById('stopCastBtn').style.display  = 'flex';
+      setStatus('▶ <strong>Live</strong> — casting now', 'connected');
+      showToast('Cast is live!', 'ok');
+      var vt = localStream.getVideoTracks();
+      if (vt.length) vt[0].onended = stopCasting;
+    }
+    if (data.type === 'cast-rejected') {
+      if (localStream) { localStream.getTracks().forEach(function(t){t.stop();}); localStream=null; }
+      document.getElementById('startCastBtn').style.display = 'flex';
+      document.getElementById('stopCastBtn').style.display  = 'none';
+      showToast('Receiver declined.', 'err');
+      setStatus('<strong>Connected</strong> — cast was declined', 'connected');
+    }
+  });
+}
+
+// ── START CASTING ─────────────────────────────────────────────────────────────
+// Must be called directly from a button click (user gesture).
+// We capture the screen FIRST, then send the request to the receiver.
+function startCasting() {
+  if (!conn || !conn.open) { showToast('Not connected to a receiver.', 'err'); return; }
+  if (localStream) { // already have a stream, just resend request
+    try { conn.send({ type:'cast-request', senderName: peer.id.slice(0,12)+'…' }); } catch(e){}
+    setStatus('Cast request sent — waiting for receiver…', 'scanning');
+    return;
+  }
+
+  // Try getDisplayMedia (screen share). Video only — audio is optional and
+  // causes failures on many devices, so we add it separately after.
+  var dm = navigator.mediaDevices;
+  if (!dm || typeof dm.getDisplayMedia !== 'function') {
+    // Last-resort fallback: camera
+    if (dm && typeof dm.getUserMedia === 'function') {
+      showToast('Screen share unavailable — using camera.', 'info', 4000);
+      dm.getUserMedia({ video:true, audio:true }).then(onStream).catch(onCaptureErr);
+    } else {
+      showToast('Media capture not supported. Use Chrome or Edge.', 'err', 5000);
+    }
+    return;
+  }
+
+  // Attempt 1: screen + system audio
+  dm.getDisplayMedia({ video:true, audio:true }).then(onStream).catch(function(err) {
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError' || err.name === 'AbortError') {
+      onCaptureErr(err); // user denied or cancelled — don't retry
+    } else {
+      // Audio caused an issue — retry video only
+      dm.getDisplayMedia({ video:true }).then(onStream).catch(onCaptureErr);
+    }
+  });
+}
+
+function onStream(stream) {
+  localStream = stream;
+  setStatus('Screen captured — sending request to receiver…', 'scanning');
+  showToast('Waiting for receiver to accept…', 'info');
+  try {
+    conn.send({ type:'cast-request', senderName: peer.id.slice(0,12)+'…' });
+  } catch(e) {
+    showToast('Failed to reach receiver.', 'err');
+    localStream.getTracks().forEach(function(t){t.stop();}); localStream=null;
+  }
+}
+
+function onCaptureErr(err) {
+  var n = err.name || '';
+  if (n === 'NotAllowedError' || n === 'PermissionDeniedError') {
+    showToast('Permission denied — click Allow in the browser prompt.', 'err', 5000);
+    setStatus('Permission denied. Click Start Casting and then Allow.', 'error');
+  } else if (n === 'AbortError') {
+    showToast('Cancelled — try again.', 'info');
+    setStatus('<strong>Connected</strong> — ready to cast', 'connected');
+  } else if (n === 'NotReadableError') {
+    showToast('Screen is busy — close other apps using it.', 'err', 5000);
+  } else {
+    showToast('Capture failed: ' + (err.message || n), 'err');
+  }
+}
+
+function stopCasting() {
+  if (localStream) { localStream.getTracks().forEach(function(t){t.stop();}); localStream=null; }
+  if (conn) { try { conn.send({type:'cast-stopped'}); } catch(e){} }
+  document.getElementById('liveBadge').classList.remove('show');
+  document.getElementById('startCastBtn').style.display = 'flex';
+  document.getElementById('stopCastBtn').style.display  = 'none';
+  setStatus('<strong>Connected</strong> — cast stopped', 'connected');
+  showToast('Cast stopped.', 'info');
+}
+
+// ── RECEIVER ACCEPT / REJECT ──────────────────────────────────────────────────
+function acceptCast() {
+  castAccepted = true;
+  document.getElementById('castModal').classList.remove('show');
+  if (conn) { try { conn.send({type:'cast-accepted'}); } catch(e){} }
+  // If the media call already arrived, answer it now.
+  // If not yet arrived, peer.on('call') will answer it when it comes.
+  if (pendingCall) answerCall(pendingCall);
+}
+
+function answerCall(call) {
+  call.answer(); // answer with no stream — we're the display, not a sender
+  call.on('stream', function(stream) {
+    var v = document.getElementById('remoteVideo');
+    v.srcObject = stream;
+    document.getElementById('screenView').classList.add('show');
+    document.getElementById('stopReceiveBtn').style.display = 'flex';
+    setStatus('▶ <strong>Live</strong> — receiving cast', 'connected');
+    showToast('Cast started!', 'ok');
+    mediaConn = call;
+  });
+  call.on('close', endCastReceiver);
+  call.on('error', function(){ endCastReceiver(); showToast('Call error.', 'err'); });
+}
+
+function rejectCast() {
+  castAccepted = false;
+  document.getElementById('castModal').classList.remove('show');
+  if (conn) { try { conn.send({type:'cast-rejected'}); } catch(e){} }
+  showToast('Cast declined.', 'info');
+  setStatus('<strong>Receiver ready</strong> — cast was declined', 'ready');
+}
+
+function endCastReceiver() {
+  var v = document.getElementById('remoteVideo');
+  if (v) v.srcObject = null;
+  document.getElementById('screenView').classList.remove('show');
+  document.getElementById('stopReceiveBtn').style.display = 'none';
+  castAccepted = false; pendingCall = null;
+  setStatus('<strong>Receiver ready</strong> — session ended', 'ready');
+}
+
+function stopReceiving() {
+  endCastReceiver();
+  if (conn) { try { conn.send({type:'cast-stopped'}); } catch(e){} }
+  showToast('Session ended.', 'info');
+}
+
+document.getElementById('castModal').addEventListener('click', function(e){
+  if (e.target === this) rejectCast();
+});
+</script>
+</body>
+</html>
